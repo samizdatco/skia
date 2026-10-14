@@ -7,6 +7,11 @@ import("../../gn/skia.gni")
 import("../third_party.gni")
 import("icu.gni")
 
+declare_args() {
+  # Embed only the ICU data items skunicode can load (see filter_icu_data.py).
+  skia_icu_filter_data = true
+}
+
 if (skia_use_system_icu) {
   system("icu") {
     libs = [ "icuuc" ]
@@ -19,6 +24,7 @@ if (skia_use_system_icu) {
     data_assembly = "$target_gen_dir/icudtl_dat.S"
   }
   data_dir = "../externals/icu/"
+  _filter_icu_data = false
   if (target_cpu == "wasm") {
     # Use a super super super stripped down version for wasm,
     # which is the same thing flutter is using.
@@ -29,13 +35,32 @@ if (skia_use_system_icu) {
     data_dir += "ios"
   } else {
     data_dir += "common"
+    _filter_icu_data = skia_icu_filter_data
+  }
+  _icudtl = "$data_dir/icudtl.dat"
+  if (_filter_icu_data) {
+    action("filter_icu_data") {
+      script = "filter_icu_data.py"
+      inputs = [ _icudtl ]
+
+      # make_data_assembly.py takes the endianness from the "l.dat" suffix.
+      outputs = [ "$target_gen_dir/icudtl.dat" ]
+      args = [
+        rebase_path(inputs[0], root_build_dir),
+        rebase_path(outputs[0], root_build_dir),
+      ]
+    }
+    _icudtl = "$target_gen_dir/icudtl.dat"
   }
   action("make_data_assembly") {
+    if (_filter_icu_data) {
+      deps = [ ":filter_icu_data" ]
+    }
     if (target_cpu == "wasm") {
       _u_icu_version_major_num =
           "78"  # defined in source/common/unicode/uvernum.h
       script = "make_data_cpp.py"
-      inputs = [ "$data_dir/icudtl.dat" ]
+      inputs = [ _icudtl ]
       outputs = [ data_assembly ]
       args = [
         "icudt${_u_icu_version_major_num}_dat",
@@ -44,7 +69,7 @@ if (skia_use_system_icu) {
       ]
     } else {
       script = "../externals/icu/scripts/make_data_assembly.py"
-      inputs = [ "$data_dir/icudtl.dat" ]
+      inputs = [ _icudtl ]
       outputs = [ "$data_assembly" ]
       args = [
         rebase_path(inputs[0], root_build_dir),
@@ -113,7 +138,10 @@ if (skia_use_system_icu) {
   }
 
   copy("icudata") {
-    sources = [ "../externals/icu/common/icudtl.dat" ]
+    sources = [ _icudtl ]
+    if (_filter_icu_data) {
+      deps = [ ":filter_icu_data" ]
+    }
     outputs = [ "$root_out_dir/icudtl.dat" ]
     data = [ "$root_out_dir/icudtl.dat" ]
   }
